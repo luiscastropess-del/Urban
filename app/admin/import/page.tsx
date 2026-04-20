@@ -1,217 +1,261 @@
-"use client";
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { useToast } from "@/components/ToastProvider";
-import { ArrowLeft, Database, Search, MapPin, List, Download, CloudUpload, History, Store, Loader2, Star, MessageCircle, DollarSign, Clock } from "lucide-react";
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import { Search, MapPin, Star, Check, AlertCircle, Loader2, RefreshCw } from 'lucide-react'; // NOVO: import RefreshCw
+import { useToast } from '@/components/ToastProvider';
+
+interface GooglePlace {
+  id: string;
+  displayName: { text: string };
+  primaryTypeDisplayName?: { text: string };
+  formattedAddress?: string;
+  rating?: number;
+  userRatingCount?: number;
+  photos?: { name: string }[];
+  alreadyImported?: boolean;
+}
 
 export default function ImportPlacesPage() {
-  const router = useRouter();
   const { showToast } = useToast();
+  const router = useRouter();
 
-  const [city, setCity] = useState("");
-  const [category, setCategory] = useState("");
-  const [radius, setRadius] = useState("10");
+  const [searchQuery, setSearchQuery] = useState('');
+  const [places, setPlaces] = useState<GooglePlace[]>([]);
+  const [selectedPlaces, setSelectedPlaces] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
-  const [places, setPlaces] = useState<any[]>([]);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  
-  // Status de importação
-  const [isImporting, setIsImporting] = useState(false);
-  const [importProgress, setImportProgress] = useState(0);
-  const [importText, setImportText] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [isReimporting, setIsReimporting] = useState<string | null>(null); // NOVO: estado para reimport
 
-  const searchPlaces = async () => {
-    if (!city || !category) return showToast("⚠️ Preencha cidade e categoria");
-    
+  const searchPlaces = useCallback(async () => {
+    if (!searchQuery.trim()) {
+      showToast('Digite algo para buscar');
+      return;
+    }
     setLoading(true);
-    setPlaces([]);
-    
     try {
-      const res = await fetch("/api/admin/search-places", {
-        method: "POST",
-        body: JSON.stringify({ city, category, radius: parseInt(radius) })
-      });
+      const res = await fetch(`/api/admin/search-places?q=${encodeURIComponent(searchQuery)}`);
       const data = await res.json();
-      
       if (data.error) {
-        if (data.error.includes("This API is not activated") || data.error.includes("not been used in project") || data.error.includes("PERMISSION_DENIED")) {
-           showToast("⚠️ API do Google desativada! Ative no Google Cloud.");
-        } else {
-           showToast(`❌ Erro: ${data.error}`);
-        }
-      } else if (data.places && data.places.length > 0) {
-        setPlaces(data.places);
-        showToast(`📍 ${data.places.length} locais encontrados`);
+        showToast(`Erro: ${data.error}`);
       } else {
-         showToast("Busca vazia ou nenhum local encontrado");
+        setPlaces(data.places || []);
+        setSelectedPlaces(new Set());
       }
     } catch (e) {
-      showToast("❌ Erro interno de conexão");
+      showToast('Erro de conexão');
     } finally {
       setLoading(false);
     }
-  };
+  }, [searchQuery, showToast]);
 
-  const toggleSelect = (id: string, imported: boolean) => {
-    if (imported) return; // Travar locais que já existem
-    const newSet = new Set(selectedIds);
-    if (newSet.has(id)) newSet.delete(id);
-    else newSet.add(id);
-    setSelectedIds(newSet);
-  };
-
-  const selectAll = () => {
-    const newSet = new Set<string>();
-    places.filter(p => !p.alreadyImported).forEach(p => newSet.add(p.id));
-    setSelectedIds(newSet);
-  };
-
-  const performImport = async (idsToImport: string[]) => {
-    if (idsToImport.length === 0) return showToast("Nenhum local selecionado");
-    
-    setIsImporting(true);
-    let successCount = 0;
-    
-    // Tratamento e isolamento da variável estado/cidade do envio pro Prisma
-    const cityParsed = city.split(',')[0].trim();
-    const stateParsed = city.split(',')[1]?.trim() || "SP";
-
-    for (let i = 0; i < idsToImport.length; i++) {
-       const placeId = idsToImport[i];
-       const pData = places.find(p => p.id === placeId);
-       
-       setImportProgress(((i + 1) / idsToImport.length) * 100);
-       setImportText(`Baixando imagens e dados: ${pData?.name}...`);
-       
-       try {
-         const res = await fetch("/api/admin/import-single", {
-           method: "POST",
-           body: JSON.stringify({ placeId, city: cityParsed, state: stateParsed })
-         });
-         const data = await res.json();
-         if (data.success) successCount++;
-       } catch (e) {
-         console.error("Error importing", placeId);
-       }
+  const toggleSelect = (placeId: string) => {
+    const newSet = new Set(selectedPlaces);
+    if (newSet.has(placeId)) {
+      newSet.delete(placeId);
+    } else {
+      newSet.add(placeId);
     }
-    
-    setIsImporting(false);
-    showToast(`✅ ${successCount} locais importados para ${cityParsed}!`);
-    setSelectedIds(new Set());
-    
-    // Roda novamente a busca para riscar como importados
-    searchPlaces();
+    setSelectedPlaces(newSet);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedPlaces.size === places.filter(p => !p.alreadyImported).length) {
+      setSelectedPlaces(new Set());
+    } else {
+      const toSelect = places.filter(p => !p.alreadyImported).map(p => p.id);
+      setSelectedPlaces(new Set(toSelect));
+    }
+  };
+
+  const importSelected = async () => {
+    if (selectedPlaces.size === 0) {
+      showToast('Nenhum lugar selecionado');
+      return;
+    }
+    setImporting(true);
+    setProgress({ current: 0, total: selectedPlaces.size });
+
+    const ids = Array.from(selectedPlaces);
+    for (let i = 0; i < ids.length; i++) {
+      try {
+        const res = await fetch('/api/admin/import-single', {
+          method: 'POST',
+          body: JSON.stringify({ placeId: ids[i] }),
+        });
+        const data = await res.json();
+        if (!data.error) {
+          showToast(`✅ Importado: ${data.place.name}`);
+        } else {
+          showToast(`❌ Falha ao importar: ${data.error}`);
+        }
+      } catch (e) {
+        showToast(`❌ Erro de rede ao importar`);
+      }
+      setProgress({ current: i + 1, total: ids.length });
+    }
+    setImporting(false);
+    setSelectedPlaces(new Set());
+    searchPlaces(); // recarrega lista para atualizar status "já importado"
+  };
+
+  // NOVO: função para reimportar um lugar existente
+  const handleReimport = async (placeId: string, placeName: string) => {
+    if (!confirm(`Isso irá sobrescrever os dados atuais de "${placeName}" com as informações mais recentes do Google. Continuar?`)) {
+      return;
+    }
+    setIsReimporting(placeId);
+    try {
+      const res = await fetch('/api/admin/reimport-single', {
+        method: 'POST',
+        body: JSON.stringify({ placeId }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        showToast(`❌ Erro ao reimportar: ${data.error}`);
+      } else {
+        showToast(`✅ "${placeName}" foi atualizado com sucesso!`);
+        searchPlaces(); // opcional: recarregar para refletir alterações
+      }
+    } catch (e) {
+      showToast('❌ Erro interno de conexão');
+    } finally {
+      setIsReimporting(null);
+    }
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 dark:bg-slate-900 border-x border-slate-200 dark:border-slate-800 relative">
-      <header className="px-5 pt-6 pb-3 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md z-10 shrink-0">
-        <div className="flex items-center gap-3">
-          <button onClick={() => router.back()} className="h-10 w-10 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
-            <ArrowLeft className="text-slate-600 dark:text-slate-300" size={20} />
-          </button>
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center shadow">
-               <Database className="text-white" size={16} />
-            </div>
-            <h1 className="text-xl font-bold">Importar Google</h1>
-          </div>
+    <div className="max-w-4xl mx-auto p-4">
+      <h1 className="text-2xl font-bold mb-4">Importar Lugares do Google</h1>
+
+      {/* Barra de busca */}
+      <div className="flex gap-2 mb-6">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && searchPlaces()}
+            placeholder="Ex: Cafés em Holambra"
+            className="w-full pl-10 pr-4 py-3 border rounded-xl"
+          />
         </div>
-      </header>
-
-      <div className="flex-1 overflow-y-auto px-5 pb-24 feed-scroll">
-         {/* Formulário */}
-         <div className="bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl border border-white/30 dark:border-white/10 rounded-2xl p-4 mt-4 mb-5 shadow-sm">
-             <h3 className="font-bold text-sm mb-3 flex items-center gap-2">
-                <Search size={16} className="text-blue-500" /> Buscar
-             </h3>
-             <div className="space-y-3">
-               <div>
-                 <label className="text-xs font-medium text-slate-500">Cidade (Nome, UF)</label>
-                 <div className="relative">
-                   <MapPin size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                   <input value={city} onChange={e=>setCity(e.target.value)} type="text" placeholder="Holambra, SP" className="w-full bg-slate-100 dark:bg-slate-800 border-0 rounded-xl py-3 pl-10 pr-3 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none" />
-                 </div>
-               </div>
-               <div>
-                 <label className="text-xs font-medium text-slate-500">Categoria Google</label>
-                 <select value={category} onChange={e=>setCategory(e.target.value)} className="w-full bg-slate-100 dark:bg-slate-800 border-0 rounded-xl p-3 text-sm focus:ring-2 focus:ring-blue-500/50 outline-none">
-                    <option value="">Selecione...</option>
-                    <option value="restaurant">🍽️ Restaurante</option>
-                    <option value="cafe">☕ Café</option>
-                    <option value="tourist_attraction">🎡 Atração Turística</option>
-                    <option value="park">🌳 Parque</option>
-                    <option value="hotel">🏨 Hotel / Hospedagem</option>
-                 </select>
-               </div>
-               <button onClick={searchPlaces} disabled={loading} className="w-full py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-xl font-semibold text-sm shadow flex items-center justify-center gap-2">
-                 {loading ? <Loader2 className="animate-spin" size={16}/> : <Search size={16}/>} 
-                 {loading ? "Mapeando satélite..." : "Buscar API"}
-               </button>
-             </div>
-         </div>
-
-         {/* Resultados */}
-         {places.length > 0 && (
-           <div className="animate-in fade-in slide-in-from-bottom-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="font-bold text-sm flex items-center gap-2">
-                  <List size={16} className="text-blue-500" /> {places.length} listados
-                </h3>
-                <button onClick={selectAll} className="text-xs text-blue-500 font-medium">Selecionar todos novos</button>
-              </div>
-
-              <div className="space-y-3 mb-5">
-                 {places.map(place => (
-                   <div key={place.id} onClick={() => toggleSelect(place.id, place.alreadyImported)} className={`bg-white/70 dark:bg-slate-800/70 border rounded-xl p-3 cursor-pointer transition ${selectedIds.has(place.id) ? 'border-blue-500 ring-1 ring-blue-500 bg-blue-50/50 dark:bg-blue-900/20' : 'border-white/30 dark:border-white/10'} ${place.alreadyImported ? 'opacity-50 grayscale pointer-events-none' : ''}`}>
-                      <div className="flex items-start gap-3">
-                        <div className={`mt-1 h-5 w-5 rounded-md border flex items-center justify-center flex-shrink-0 ${selectedIds.has(place.id) ? 'bg-blue-500 border-blue-500 text-white' : 'border-slate-300 dark:border-slate-600'}`}>
-                           {selectedIds.has(place.id) && <Loader2 size={12} className={isImporting ? 'animate-spin' : 'hidden'} />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                           <h4 className="font-bold text-sm truncate flex items-center gap-2">
-                              {place.name} 
-                              {place.alreadyImported && <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded px-1">Importado</span>}
-                           </h4>
-                           <p className="text-xs text-slate-500 truncate">{place.address}</p>
-                           <div className="flex gap-3 mt-2 text-xs text-slate-500">
-                              <span className="flex items-center gap-1"><Star size={12} className="text-amber-400 fill-amber-400"/> {place.rating}</span>
-                              <span className="flex items-center gap-1"><MessageCircle size={12}/> {place.reviews}</span>
-                              {place.priceLevel && <span className="flex items-center gap-1"><DollarSign size={12} /> {place.priceLevel}</span>}
-                           </div>
-                        </div>
-                      </div>
-                   </div>
-                 ))}
-              </div>
-
-              {/* Float Fixer */}
-              <div className="bg-white/90 dark:bg-slate-800/90 backdrop-blur-xl border border-white/30 dark:border-white/10 rounded-2xl p-4 sticky bottom-6 shadow-xl">
-                 <div className="flex items-center justify-between mb-3 text-sm">
-                    <span className="font-bold">{selectedIds.size} locais selecionados</span>
-                 </div>
-                 <button disabled={selectedIds.size === 0 || isImporting} onClick={() => performImport(Array.from(selectedIds))} className="w-full py-3.5 bg-gradient-to-r from-orange-500 to-green-500 disabled:from-slate-400 disabled:to-slate-500 text-white rounded-xl font-bold text-sm shadow-md flex items-center justify-center gap-2">
-                    {isImporting ? <Loader2 size={18} className="animate-spin" /> : <CloudUpload size={18} />}
-                    {isImporting ? "Extraindo dados do Google..." : "Processar Importação Global"}
-                 </button>
-              </div>
-           </div>
-         )}
+        <button
+          onClick={searchPlaces}
+          disabled={loading}
+          className="bg-blue-600 text-white px-6 py-3 rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+        >
+          {loading ? <Loader2 size={18} className="animate-spin" /> : <Search size={18} />}
+          Buscar
+        </button>
       </div>
 
-      {/* Modal Bloqueador de Progresso Escuro */}
-      {isImporting && (
-        <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-5">
-           <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 w-full max-w-sm text-center shadow-2xl">
-              <CloudUpload size={48} className="mx-auto text-blue-500 mb-4 animate-bounce" />
-              <h3 className="font-bold text-xl mb-2 text-slate-900 dark:text-white">Motor Trabalhando</h3>
-              <p className="text-sm text-slate-500 mb-6">{importText}</p>
-              
-              <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                <div style={{ width: `${importProgress}%` }} className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 transition-all duration-300"></div>
+      {/* Progresso da importação */}
+      {importing && (
+        <div className="mb-4 p-4 bg-blue-50 rounded-xl">
+          <p className="font-medium">Importando... {progress.current}/{progress.total}</p>
+          <div className="w-full h-2 bg-blue-200 rounded-full mt-2">
+            <div
+              className="h-full bg-blue-600 rounded-full transition-all"
+              style={{ width: `${(progress.current / progress.total) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Lista de lugares */}
+      {places.length > 0 && (
+        <>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm text-slate-500">{places.length} lugares encontrados</p>
+            <button
+              onClick={toggleSelectAll}
+              className="text-sm text-blue-600 font-medium"
+              disabled={importing}
+            >
+              {selectedPlaces.size === places.filter(p => !p.alreadyImported).length ? 'Desmarcar todos' : 'Selecionar todos'}
+            </button>
+          </div>
+
+          <div className="space-y-3 mb-6">
+            {places.map(place => (
+              <div
+                key={place.id}
+                className={`border rounded-xl p-4 flex items-start gap-3 ${
+                  place.alreadyImported ? 'bg-green-50 border-green-200' : 'bg-white'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedPlaces.has(place.id)}
+                  onChange={() => toggleSelect(place.id)}
+                  disabled={place.alreadyImported || importing}
+                  className="mt-1 w-4 h-4 accent-blue-600"
+                />
+                <div className="flex-1">
+                  <h3 className="font-bold text-lg">{place.displayName.text}</h3>
+                  <p className="text-sm text-slate-600 flex items-center gap-1">
+                    <MapPin size={14} /> {place.formattedAddress || 'Endereço não disponível'}
+                  </p>
+                  {place.rating && (
+                    <p className="text-sm flex items-center gap-1 mt-1">
+                      <Star size={14} className="fill-amber-400 text-amber-400" />
+                      {place.rating} ({place.userRatingCount} avaliações)
+                    </p>
+                  )}
+                  <p className="text-xs text-slate-500 mt-1">{place.primaryTypeDisplayName?.text}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {place.alreadyImported ? (
+                    <>
+                      <span className="text-xs bg-green-200 text-green-800 px-2 py-1 rounded-full flex items-center gap-1">
+                        <Check size={12} /> Importado
+                      </span>
+                      {/* NOVO: Botão Re-importar */}
+                      <button
+                        onClick={() => handleReimport(place.id, place.displayName.text)}
+                        disabled={isReimporting === place.id}
+                        className="text-xs bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded-full disabled:opacity-50 flex items-center gap-1"
+                      >
+                        {isReimporting === place.id ? (
+                          <>
+                            <Loader2 size={12} className="animate-spin" /> Atualizando...
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw size={12} /> Re-importar
+                          </>
+                        )}
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-xs text-slate-400">Não importado</span>
+                  )}
+                </div>
               </div>
-              <p className="text-xs font-bold text-blue-500 mt-2">{Math.round(importProgress)}%</p>
-           </div>
+            ))}
+          </div>
+
+          {/* Botão de importar selecionados */}
+          {selectedPlaces.size > 0 && !importing && (
+            <button
+              onClick={importSelected}
+              className="w-full bg-green-600 text-white py-3 rounded-xl font-medium hover:bg-green-700 flex items-center justify-center gap-2"
+            >
+              <Check size={18} />
+              Importar {selectedPlaces.size} lugar(es) selecionado(s)
+            </button>
+          )}
+        </>
+      )}
+
+      {/* Estado vazio */}
+      {!loading && places.length === 0 && (
+        <div className="text-center py-12">
+          <AlertCircle className="mx-auto text-slate-400 mb-2" size={32} />
+          <p className="text-slate-500">Nenhum lugar encontrado. Faça uma busca.</p>
         </div>
       )}
     </div>
