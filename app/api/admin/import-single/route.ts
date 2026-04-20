@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { searchPlaces } from '@/lib/places-api';
 import { getPlaceDetails, downloadAndUploadPhoto } from '@/lib/places-api';
 import { db } from '@/lib/prisma';
 
