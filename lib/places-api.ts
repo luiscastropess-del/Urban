@@ -3,7 +3,9 @@ import { Storage } from '@google-cloud/storage';
 function formatPrivateKey(key: string | undefined): string | undefined {
   if (!key) return undefined;
   
-  let formatted = key.replace(/\\n/g, '\n');
+  // Remove possible surrounding quotes
+  let formatted = key.replace(/^"|"$/g, '');
+  formatted = formatted.replace(/\\n/g, '\n');
   
   // Se o parser do ambiente (.env do Node ou Vercel) achatou as quebras de linha para espaços
   if (!formatted.includes('\n') && formatted.includes('BEGIN PRIVATE KEY')) {
@@ -20,13 +22,18 @@ function formatPrivateKey(key: string | undefined): string | undefined {
 }
 
 // Inicia o cliente do GCS apenas se as credenciais existirem
-const storage = new Storage({
+const storageOptions: any = {
   projectId: process.env.NEXT_PUBLIC_GCP_PROJECT_ID,
-  credentials: {
+};
+
+if (process.env.GCP_CLIENT_EMAIL && process.env.GCP_PRIVATE_KEY) {
+  storageOptions.credentials = {
     client_email: process.env.GCP_CLIENT_EMAIL,
     private_key: formatPrivateKey(process.env.GCP_PRIVATE_KEY),
-  },
-});
+  };
+}
+
+const storage = new Storage(storageOptions);
 
 const BUCKET_NAME = process.env.GCP_STORAGE_BUCKET || 'urbano-places-photos';
 
@@ -97,12 +104,22 @@ export async function downloadAndUploadPhoto(photoName: string, placeId: string)
   
   // Nome único (Prevenção de cache do CDN)
   const destFileName = `places/${placeId}/${new Date().getTime()}.jpg`;
+  
+  // Se não temos credenciais do GCS configuradas, retorna a URL nativa do Google.
+  if (!process.env.GCP_CLIENT_EMAIL || !process.env.GCP_PRIVATE_KEY) {
+    return url;
+  }
+  
   const file = storage.bucket(BUCKET_NAME).file(destFileName);
 
-  await file.save(buffer, {
-    metadata: { contentType: 'image/jpeg' },
-    public: true, // Importante para renderizar no site
-  });
-
-  return `https://storage.googleapis.com/${BUCKET_NAME}/${destFileName}`;
+  try {
+    await file.save(buffer, {
+      metadata: { contentType: 'image/jpeg' },
+      public: true, // Importante para renderizar no site
+    });
+    return `https://storage.googleapis.com/${BUCKET_NAME}/${destFileName}`;
+  } catch (error) {
+    console.warn(`[GCS Warning] Falha ao fazer upload da imagem para ${placeId}. Usando URL nativa do Google. Erro:`, error);
+    return url;
+  }
 }

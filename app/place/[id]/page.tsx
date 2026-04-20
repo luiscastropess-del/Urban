@@ -299,7 +299,7 @@ export default function PlacePublicPage() {
                           {Array.from({length: 5}).map((_, j) => <Star key={j} size={10} className={j < Math.round(rev.rating) ? "fill-amber-400" : "opacity-30"} />)}
                         </div>
                       </div>
-                      <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">"{rev.text}"</p>
+                      <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">&quot;{rev.text}&quot;</p>
                       <div className="flex items-center justify-between mt-3 text-[10px] text-slate-400 font-semibold tracking-wide">
                         <span className="uppercase">{rev.relativePublishTime || 'Avaliação do Google'}</span>
                       </div>
@@ -322,7 +322,7 @@ export default function PlacePublicPage() {
                           {Array.from({length: 5}).map((_, j) => <Star key={j} size={10} className={j < rev.s ? "fill-amber-400" : "opacity-30"} />)}
                         </div>
                       </div>
-                      <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">"{rev.c}"</p>
+                      <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">&quot;{rev.c}&quot;</p>
                       <div className="flex items-center justify-between mt-3 text-[10px] text-slate-400 font-semibold tracking-wide">
                         <span className="uppercase">{rev.t}</span>
                         <button className="flex items-center gap-1 hover:text-amber-500 transition" onClick={() => showToast('👍 Útil')}>
