@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Place {
+  id          String   @id @default(uuid())
+  googlePlaceId String?  @unique // Chave para evitar duplicatas do Google
+  name        String
+  emoji       String   @default("📍")
+  rating      Float?
+  userRatingsTotal Int? @default(0)
+  priceLevel  Int?
+  reviews     String?  // Legado
+  distance    String?  // Legado
+  type        String   @default("Lugar")
+  types       String[] // Suportado no Postgres: Array com categorias exatas (restaurant, cafe)
+  featured    Boolean  @default(false)
+  premium     Boolean  @default(false)
+  description String?
+  editorialSummary String? // Descrição feita por editores do Google
+  tags        String?
+  address     String?
+  city        String?
+  state       String?
+  cep         String?
+  phone       String?
+  internationalPhone String?
+  instagram   String?
+  website     String?
+  email       String?
+  plan        String   @default("free")
+  coverImage  String?
+  images      String?  // Legado
+
+  // Novos Relacionamentos
+  photos        Photo[]
+  googleReviews Review[]
+  openingHours  OpeningHours?
+  menuLink      MenuLink?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+}
+
+model Photo {
+  id           String @id @default(uuid())
+  url          String // URL pública do Google Cloud Storage
+  googleRef    String? // Referência original para checagem
+  htmlAttributions String[] // Créditos exigidos pelos direitos autorais
+  placeId      String
+  place        Place @relation(fields: [placeId], references: [id], onDelete: Cascade)
+}
+
+model Review {
+  id                 String @id @default(uuid())
+  authorName         String
+  authorPhotoUrl     String?
+  rating             Float
+  text               String
+  relativePublishTime String?
+  placeId            String
+  place              Place @relation(fields: [placeId], references: [id], onDelete: Cascade)
+}
+
+model OpeningHours {
+  id           String @id @default(uuid())
+  weekdayText  String[] // Array do tipo ["Seg: 09:00 - 18:00", ...]
+  openNow      Boolean @default(false)
+  placeId      String @unique
+  place        Place @relation(fields: [placeId], references: [id], onDelete: Cascade)
+}
+
+model MenuLink {
+  id           String @id @default(uuid())
+  url          String
+  placeId      String @unique
+  place        Place @relation(fields: [placeId], references: [id], onDelete: Cascade)
+}
+
+model ImportJob {
+  id          String @id @default(uuid())
+  city        String
+  category    String
+  placesCount Int
+  status      String @default("COMPLETED")
+  createdAt   DateTime @default(now())
+}
+
+model Event {
+  id          String   @id @default(uuid())
+  name        String
+  emoji       String
+  type        String
+  gradient    String
+  date        String
+  time        String
+  loc         String
+  featured    Boolean  @default(false)
+}
+
+model Favorite {
+  id          String   @id @default(uuid())
+  name        String
+  emoji       String
+  rating      String
+  address     String
+  date        String
+  note        String?
+}
